@@ -1,0 +1,151 @@
+---
+title: Predicting Body Movements using Wearable Accelerometers (Practical Machine Learning
+  Course Project)
+author: "Ranxel Almario"
+date: "November 28, 2018"
+output: 
+        html_document:
+                css: air.css
+---
+
+<style>
+h1, h2, h3 {
+text-align: left !important;
+}
+body {
+text-align: justify;
+}
+</style>
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Overview
+
+This project explores the body movement prediction using accelerometers data collected from the research *Wearable Computing: Accelerometers’ Data Classification of Body Postures and Movements by W. Ugulino et. al*. The data used was collected during the said research with 8 hours of activities, 2 hours with each one of the 4 participants (2 men and 2 women) with acceloremeters worn by each participant in the waist, left thigh, right ankle, and right arm. The goal is to predict the manner in which they did the exercise using the collected data. The research already explored this and achieved an **overall recognition performance of 99.4% (weighted average)**. This report tries to achieve similar prediction accuracy using the concepts and methods learned in the Practical Machine Learning course taught by Johns Hopkins University through Coursera.
+
+### Pre-processing
+First, we load the **caret** package and other packages:
+
+```{r caret, echo=TRUE, warning=FALSE, message=FALSE}
+require(caret)
+require(parallel)
+require(doParallel)
+require(e1071)
+```
+
+Then, read and load the training dataset and testing dataset:
+
+```{r loadcsv, echo=TRUE}
+# Download, save and load the source dataset to the working directory
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainCSV <- "pml-training.csv"
+testCSV <- "pml-testing.csv"
+
+if (!file.exists(trainCSV)) {
+        download.file(trainUrl, trainCSV)
+}
+
+if (!file.exists(testCSV)) {
+        download.file(testUrl, testCSV)
+}
+
+trainSet <- read.csv("pml-training.csv")
+testSet <- read.csv("pml-testing.csv")
+
+```
+Next, we are going to reduce features using **2** criteria, **mostly NA values** and **near zero variance**:
+
+```{r reducefeat, echo=TRUE}
+otrainSet <- trainSet # backup
+# exclude mostly NA values
+mostNA <- which(colMeans(is.na(trainSet)) > 0.95)
+trainSet <- trainSet[, -mostNA]
+
+# exclude variables with near zero coefficients
+nzeroVar <- nearZeroVar(trainSet)
+trainSet <- trainSet[, -nzeroVar]
+```
+
+```{r commonsense, echo=TRUE}
+names(trainSet)[1:5]
+trainSet <- trainSet[, -(1:5)]
+```
+
+Looking at the variable characteristics of the **first 5 columns** above, which comprises of row numbers, usernames, and timestamps, it is a good assumption that remove these in the model training which may result in overfitting. In this project, we decided to remove them in the dataset.
+
+Lastly, we perform data slicing with the training dataset. With these we can perform cross-validation, test various models and estimate the out-of-sample error without using the test set.
+
+```{r dataslice, echo=TRUE}
+set.seed(11282018)
+subtrainSet <- createDataPartition(y = trainSet$classe, times = 1, p = 0.75, list = FALSE)
+traintrSet <- trainSet[subtrainSet, ]
+testtrSet <- trainSet[-subtrainSet, ]
+```
+
+### Model Building and Cross-Validation
+
+In this project, we decided to use the random forest method in model training as a starting point, considering that is most commonly used and one of the most accurate algorithms. 
+
+```{r modeltrain, echo=TRUE, cache=TRUE}
+# Since it is a heavy-resource command, decided to use LGreski commands on improving caret performance
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+# Main training command 
+fit <- train(classe ~ ., traintrSet, method="rf", trControl=fitControl)
+# After processing the data, we explicitly shut down the cluster
+stopCluster(cluster)
+fit$finalModel
+```
+
+We can see that the final model has an **out-of-bag estimate of error rate at 0.23%** which less than the 1% expected error rate.
+
+Using the test set from the subset of the training set, we can also cross-validate the model and get the prediction accuracy of the final model.
+
+```{r confmatrix, echo=TRUE}
+pred <- predict(fit, testtrSet)
+confusionMatrix(testtrSet$classe, pred)
+```
+
+Seeing the overall statistics, the prediction accuracy is 99.7%. With this, we will choose this model to train the full training set seeing that is a great prediction model.
+
+```{r trainfull, echo=TRUE, cache=TRUE}
+# Since it is a heavy-resource command, decided to use LGreski commands on improving caret performance
+cluster <- makeCluster(detectCores() - 1)
+registerDoParallel(cluster)
+fitControl <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+# Main training command 
+fit <- train(classe ~ ., trainSet, method="rf", trControl=fitControl)
+stopCluster(cluster) # After processing the data, we explicitly shut down the cluster
+```
+
+We can now remove the variables on the test set removed in the training set. *Note that we will be removing the variables identified using the filters in the training set and will not be applied directly in the test set.*
+
+```{r reducetest, echo=TRUE}
+# exclude mostly NA values
+testSet <- testSet[, -mostNA]
+
+# exclude variables with near zero coefficients
+testSet <- testSet[, -nzeroVar]
+
+# exclude first 5 variables
+testSet <- testSet[, -(1:5)]
+```
+
+### Predicting the Test Cases
+
+We can now use the model to predict the 20 test cases.
+
+```{r predictingTest, echo=TRUE}
+final <- predict(fit,testSet)
+final
+```
+
+
+### References
+
+Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. *Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements.* Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
